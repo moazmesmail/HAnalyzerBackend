@@ -68,13 +68,19 @@ def analyze_images(
             {"role": "user", "content": content},
         ],
         "temperature": 0.0,
-        "max_tokens": 2500,
+        # "max_tokens": 2500,
         "usage": {"include": True},
     }
     started = time.monotonic()
     body: dict = {}
     parsed: dict | None = None
     last_error: Exception | None = None
+    logger.info(
+        "openrouter_request_initiated model=%s image_count=%d timeout_seconds=%d",
+        settings.openrouter_model,
+        len(image_paths),
+        settings.openrouter_timeout_seconds,
+    )
     for attempt in range(1, settings.openrouter_max_retries + 2):
         body = {}
         raw_content = None

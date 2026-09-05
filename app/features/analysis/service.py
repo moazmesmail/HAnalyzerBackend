@@ -85,7 +85,7 @@ def start_analysis(
         raise ApiError(
             422,
             "VIDEO_TOO_LONG",
-            "Only videos under 2 minutes can be analyzed.",
+            "Only videos under "+str(settings.video_max_duration_seconds/60)+" minutes can be analyzed.",
         )
 
     profile = PROFILES.get(request.profile_id)
@@ -104,8 +104,8 @@ def start_analysis(
             return session_response(active)
         raise ApiError(409, "ANALYSIS_ALREADY_ACTIVE", "This video already has an active analysis with different settings.")
 
-    if video.duration_seconds and float(video.duration_seconds) * request.sampling_fps > 1200:
-        raise ApiError(422, "TOO_MANY_ANALYSIS_FRAMES", "Choose a lower frame rate; an analysis is limited to 1,200 frames.")
+    # if video.duration_seconds and float(video.duration_seconds) * request.sampling_fps > 1200:
+    #     raise ApiError(422, "TOO_MANY_ANALYSIS_FRAMES", "Choose a lower frame rate; an analysis is limited to 1,200 frames.")
 
     session = AnalysisSession(
         id=uuid4(),
@@ -227,11 +227,15 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
                 db.add(frame)
 
             db.flush()
+    
+            # Split frames into batches of 8 for analysis
             frames = list_frames(db, session.id)
             batches = [frames[index : index + 8] for index in range(0, len(frames), 8)]
             session.phase = "analyzing_frames"
             session.total_jobs = 1 + len(batches)
-            session.completed_jobs = 1
+            # session.completed_jobs = 1
+            session.completed_jobs = 0
+
             session.terminal_progress_percent = 30
             db.commit()
             logger.info(
@@ -270,6 +274,8 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
         successful_batches = 0
         failed_batches = 0
         skipped_batches = 0
+
+        # Analyze each batch of frames
         for batch_number, batch in enumerate(batches, start=1):
             stop_provider_batches = False
             response = None
@@ -297,6 +303,11 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
                         f"timestamp={float(frame.timestamp_seconds):.3f}s"
                         for index, frame in enumerate(batch)
                     ],
+                )
+                logger.info(
+                    "session_id=%s response for batch=%d",
+                    session.id,
+                    batch_number,
                 )
                 result, structurally_dropped = _validate_batch_result(
                     response.content, session.id, batch_number
