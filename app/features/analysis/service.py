@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import shutil
+import time
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
@@ -184,7 +185,10 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
             stage = "extracting_frames"
             logger.info("analysis_stage_started session_id=%s stage=%s", session.id, stage)
             extracted = extract_sampled_frames(
-                source, output_dir, float(session.sampling_fps), 1200
+                source,
+                output_dir,
+                float(session.sampling_fps),
+                round(settings.video_max_duration_seconds * settings.analysis_max_fps),
             )
             logger.info(
                 "analysis_stage_completed session_id=%s stage=%s frame_count=%d",
@@ -227,23 +231,20 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
                 db.add(frame)
 
             db.flush()
-    
-            # Split frames into batches of 8 for analysis
             frames = list_frames(db, session.id)
-            batches = [frames[index : index + 8] for index in range(0, len(frames), 8)]
+            batches = _build_time_batches(frames, settings.analysis_batch_seconds)
             session.phase = "analyzing_frames"
             session.total_jobs = 1 + len(batches)
-            # session.completed_jobs = 1
-            session.completed_jobs = 0
-
+            session.completed_jobs = 1
             session.terminal_progress_percent = 30
             db.commit()
             logger.info(
-                "analysis_stage_completed session_id=%s stage=%s frame_count=%d batch_count=%d",
+                "analysis_stage_completed session_id=%s stage=%s frame_count=%d batch_count=%d batch_seconds=%.1f",
                 session.id,
                 stage,
                 len(frames),
                 len(batches),
+                settings.analysis_batch_seconds,
             )
         except Exception as exc:
             logger.exception(
@@ -278,94 +279,134 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
         # Analyze each batch of frames
         for batch_number, batch in enumerate(batches, start=1):
             stop_provider_batches = False
-            response = None
-            session = db.get(AnalysisSession, session_id)
-            session.phase = f"analyzing_batch_{batch_number}_of_{len(batches)}"
-            session.terminal_progress_percent = 30 + round(
-                70 * (batch_number - 0.5) / len(batches)
-            )
-            db.commit()
-            logger.info(
-                "analysis_batch_started session_id=%s batch=%d total_batches=%d frame_count=%d",
-                session.id,
-                batch_number,
-                len(batches),
-                len(batch),
-            )
-            try:
-                response = analyze_images(
-                    settings,
-                    _analysis_prompt(session.profile_id),
-                    [frame_paths[frame.id] for frame in batch],
-                    AnalysisBatchResult.model_json_schema(),
-                    image_labels=[
-                        f"Frame {index + 1}: frame_id={frame.id}, "
-                        f"timestamp={float(frame.timestamp_seconds):.3f}s"
-                        for index, frame in enumerate(batch)
-                    ],
-                )
-                logger.info(
-                    "session_id=%s response for batch=%d",
-                    session.id,
-                    batch_number,
-                )
-                result, structurally_dropped = _validate_batch_result(
-                    response.content, session.id, batch_number
-                )
-                stored_observations, evidence_dropped = _store_batch_result(
-                    db, session, batch, result, batch_number
-                )
-                _store_usage(db, session, response.usage, "completed", None)
+            batch_succeeded = False
+            for batch_attempt in range(1, settings.analysis_batch_max_attempts + 1):
+                response = None
                 session = db.get(AnalysisSession, session_id)
-                session.completed_jobs = 2 + successful_batches
-                session.failed_jobs = failed_batches
-                session.terminal_progress_percent = 30 + round(70 * batch_number / len(batches))
+                session.phase = (
+                    f"analyzing_batch_{batch_number}_of_{len(batches)}_attempt_{batch_attempt}"
+                )
+                session.terminal_progress_percent = 30 + round(
+                    70 * (batch_number - 0.5) / len(batches)
+                )
                 db.commit()
-                successful_batches += 1
-                summaries.append(result.summary)
                 logger.info(
-                    "analysis_batch_completed session_id=%s batch=%d observations=%d dropped_observations=%d provider_request_id=%s",
+                    "analysis_batch_started session_id=%s batch=%d total_batches=%d start_seconds=%.3f end_seconds=%.3f frame_count=%d attempt=%d max_attempts=%d",
                     session.id,
                     batch_number,
-                    stored_observations,
-                    structurally_dropped + evidence_dropped,
-                    response.usage.provider_request_id,
+                    len(batches),
+                    float(batch[0].timestamp_seconds),
+                    float(batch[-1].timestamp_seconds),
+                    len(batch),
+                    batch_attempt,
+                    settings.analysis_batch_max_attempts,
                 )
-            except Exception as exc:
-                if isinstance(exc, (ApiError, ValidationError, ValueError)):
-                    logger.warning(
-                        "analysis_batch_failed session_id=%s batch=%d error_type=%s error=%s",
+                try:
+                    response = analyze_images(
+                        settings,
+                        _analysis_prompt(session.profile_id),
+                        [frame_paths[frame.id] for frame in batch],
+                        AnalysisBatchResult.model_json_schema(),
+                        image_labels=[
+                            f"Frame {index + 1}: frame_id={frame.id}, "
+                            f"timestamp={float(frame.timestamp_seconds):.3f}s"
+                            for index, frame in enumerate(batch)
+                        ],
+                    )
+                    result, structurally_dropped = _validate_batch_result(
+                        response.content, session.id, batch_number
+                    )
+                    stored_observations, evidence_dropped = _store_batch_result(
+                        db, session, batch, result, batch_number
+                    )
+                    _store_usage(db, session, response.usage, "completed", None)
+                    session = db.get(AnalysisSession, session_id)
+                    session.completed_jobs = 2 + successful_batches
+                    session.failed_jobs = failed_batches
+                    session.terminal_progress_percent = 30 + round(
+                        70 * batch_number / len(batches)
+                    )
+                    db.commit()
+                    successful_batches += 1
+                    summaries.append(result.summary)
+                    batch_succeeded = True
+                    logger.info(
+                        "analysis_batch_completed session_id=%s batch=%d attempt=%d observations=%d dropped_observations=%d provider_request_id=%s",
                         session.id,
                         batch_number,
-                        type(exc).__name__,
-                        (
-                            exc.message if isinstance(exc, ApiError) else str(exc)
-                        ).replace("\n", " ")[:1000],
+                        batch_attempt,
+                        stored_observations,
+                        structurally_dropped + evidence_dropped,
+                        response.usage.provider_request_id,
                     )
-                else:
-                    logger.exception(
-                        "analysis_batch_failed session_id=%s batch=%d error_type=%s",
+                    break
+                except Exception as exc:
+                    if isinstance(exc, (ApiError, ValidationError, ValueError)):
+                        logger.warning(
+                            "analysis_batch_attempt_failed session_id=%s batch=%d attempt=%d error_type=%s error=%s",
+                            session.id,
+                            batch_number,
+                            batch_attempt,
+                            type(exc).__name__,
+                            (
+                                exc.message if isinstance(exc, ApiError) else str(exc)
+                            ).replace("\n", " ")[:1000],
+                        )
+                    else:
+                        logger.exception(
+                            "analysis_batch_attempt_failed session_id=%s batch=%d attempt=%d error_type=%s",
+                            session.id,
+                            batch_number,
+                            batch_attempt,
+                            type(exc).__name__,
+                        )
+                    db.rollback()
+                    session = db.get(AnalysisSession, session_id)
+                    if isinstance(exc, ApiError):
+                        message = exc.message
+                    elif isinstance(exc, (ValidationError, ValueError)):
+                        message = "The model returned results that failed validation."
+                    else:
+                        message = "The analysis result could not be saved."
+                    _store_usage(
+                        db,
+                        session,
+                        response.usage if response else None,
+                        "failed",
+                        message,
+                    )
+                    db.commit()
+                    stop_provider_batches = (
+                        isinstance(exc, ApiError)
+                        and exc.code in {
+                            "AI_NOT_CONFIGURED",
+                            "AI_AUTHENTICATION_FAILED",
+                            "AI_REQUEST_INVALID",
+                        }
+                    ) or not isinstance(exc, (ApiError, ValidationError, ValueError))
+                    if stop_provider_batches or batch_attempt == settings.analysis_batch_max_attempts:
+                        break
+                    wait_seconds = min(
+                        settings.analysis_batch_retry_seconds * 2 ** (batch_attempt - 1),
+                        settings.openrouter_retry_max_wait_seconds,
+                    )
+                    logger.info(
+                        "analysis_batch_retry_scheduled session_id=%s batch=%d next_attempt=%d wait_seconds=%.1f",
                         session.id,
                         batch_number,
-                        type(exc).__name__,
+                        batch_attempt + 1,
+                        wait_seconds,
                     )
-                db.rollback()
-                session = db.get(AnalysisSession, session_id)
-                if isinstance(exc, ApiError):
-                    message = exc.message
-                elif isinstance(exc, (ValidationError, ValueError)):
-                    message = "The model returned results that failed validation."
-                else:
-                    message = "The analysis result could not be saved."
-                _store_usage(db, session, response.usage if response else None, "failed", message)
+                    time.sleep(wait_seconds)
+
+            if not batch_succeeded:
                 failed_batches += 1
-                stop_provider_batches = (
-                    isinstance(exc, ApiError)
-                    and exc.code in {"AI_NOT_CONFIGURED", "AI_AUTHENTICATION_FAILED"}
-                ) or not isinstance(exc, (ApiError, ValidationError, ValueError))
+                session = db.get(AnalysisSession, session_id)
                 session.completed_jobs = 1 + successful_batches
                 session.failed_jobs = failed_batches
-                session.terminal_progress_percent = 30 + round(70 * batch_number / len(batches))
+                session.terminal_progress_percent = 30 + round(
+                    70 * batch_number / len(batches)
+                )
                 db.commit()
             if stop_provider_batches:
                 skipped_batches = len(batches) - batch_number
@@ -572,6 +613,18 @@ directly visible observation from any interpretation. Use null when no interpret
 Treat confidence as confidence in the visible claim, not a calibrated probability. Do not claim an
 event was absent merely because sampled frames did not show it. Return concise, non-duplicate findings.
 """
+
+
+def _build_time_batches(
+    frames: list[AnalysisFrame], batch_seconds: float
+) -> list[list[AnalysisFrame]]:
+    if batch_seconds <= 0:
+        raise ValueError("Analysis batch duration must be positive.")
+    windows: dict[int, list[AnalysisFrame]] = {}
+    for frame in frames:
+        window = int(float(frame.timestamp_seconds) // batch_seconds)
+        windows.setdefault(window, []).append(frame)
+    return [windows[window] for window in sorted(windows)]
 
 
 def _store_batch_result(

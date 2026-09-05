@@ -21,7 +21,7 @@ PROFILES = {
         display_name="Generic visual sampling",
         description="Analyzes timestamped frame batches for visible subjects, actions, text, and events.",
         minimum_fps=3,
-        maximum_fps=10,
+        maximum_fps=15,
         default_fps=3,
         capabilities=GENERIC_CAPABILITIES,
     ),
@@ -31,7 +31,7 @@ PROFILES = {
         display_name="Equestrian show jumping",
         description="Analyzes riders, horses, runs, obstacles, jumps, visible faults, technique, and displayed results.",
         minimum_fps=3,
-        maximum_fps=10,
+        maximum_fps=15,
         default_fps=3,
         capabilities={
             **GENERIC_CAPABILITIES,

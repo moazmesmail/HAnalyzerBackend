@@ -4,9 +4,12 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from io import BytesIO
+from math import ceil
 from pathlib import Path
 
 import httpx
+from PIL import Image, ImageDraw, ImageOps
 
 from app.platform.config import Settings
 from app.platform.errors import ApiError
@@ -44,17 +47,12 @@ def analyze_images(
     if image_labels is not None and len(image_labels) != len(image_paths):
         raise ValueError("Every analysis image must have one label.")
 
-    content: list[dict] = [{"type": "text", "text": prompt}]
-    for index, path in enumerate(image_paths):
-        if image_labels is not None:
-            content.append({"type": "text", "text": image_labels[index]})
-        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
-            }
-        )
+    content, request_image_count, contact_sheet_count = _build_image_content(
+        prompt,
+        image_paths,
+        image_labels,
+        settings.analysis_contact_sheet_frames,
+    )
 
     system_prompt = (
         "You analyze silent competition video frames. Return JSON only, with no markdown or "
@@ -76,18 +74,21 @@ def analyze_images(
     parsed: dict | None = None
     last_error: Exception | None = None
     logger.info(
-        "openrouter_request_initiated model=%s image_count=%d timeout_seconds=%d",
+        "openrouter_request_initiated model=%s source_frame_count=%d request_image_count=%d contact_sheet_count=%d timeout_seconds=%d",
         settings.openrouter_model,
         len(image_paths),
+        request_image_count,
+        contact_sheet_count,
         settings.openrouter_timeout_seconds,
     )
     for attempt in range(1, settings.openrouter_max_retries + 2):
         body = {}
         raw_content = None
         logger.info(
-            "openrouter_request_started model=%s image_count=%d attempt=%d timeout_seconds=%d",
+            "openrouter_request_started model=%s source_frame_count=%d request_image_count=%d attempt=%d timeout_seconds=%d",
             settings.openrouter_model,
             len(image_paths),
+            request_image_count,
             attempt,
             settings.openrouter_timeout_seconds,
         )
@@ -160,6 +161,12 @@ def analyze_images(
                     "AI_AUTHENTICATION_FAILED",
                     "OpenRouter rejected the configured API key.",
                 ) from last_error
+            if last_error.response.status_code in (400, 413):
+                raise ApiError(
+                    502,
+                    "AI_REQUEST_INVALID",
+                    "The analysis batch exceeded the provider request limits.",
+                ) from last_error
             raise ApiError(
                 502,
                 "AI_PROVIDER_ERROR",
@@ -229,13 +236,102 @@ def _parse_json_object(content: object) -> dict:
             lines[1:-1] if lines[-1].strip().startswith("```") else lines[1:]
         ).strip()
     try:
-        parsed = json.loads(candidate)
+        parsed = _load_model_json(candidate)
     except json.JSONDecodeError:
         start = candidate.find("{")
         end = candidate.rfind("}")
         if start < 0 or end <= start:
             raise
-        parsed = json.loads(candidate[start : end + 1])
+        parsed = _load_model_json(candidate[start : end + 1])
     if not isinstance(parsed, dict):
         raise TypeError("Structured response is not an object.")
     return parsed
+
+
+def _load_model_json(candidate: str) -> object:
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as original_error:
+        # Qwen occasionally escapes apostrophes even though JSON does not define \' as
+        # an escape sequence. Repair only that specific invalid sequence.
+        repaired = candidate.replace("\\'", "'")
+        if repaired == candidate:
+            raise
+        try:
+            parsed = json.loads(repaired)
+        except json.JSONDecodeError:
+            raise original_error
+        logger.warning("openrouter_response_repaired repair=invalid_apostrophe_escape")
+        return parsed
+
+
+def _build_image_content(
+    prompt: str,
+    image_paths: list[Path],
+    image_labels: list[str] | None,
+    frames_per_sheet: int,
+) -> tuple[list[dict], int, int]:
+    content: list[dict] = [{"type": "text", "text": prompt}]
+    labels = image_labels or [f"Frame {index + 1}" for index in range(len(image_paths))]
+    if frames_per_sheet <= 1 or len(image_paths) <= frames_per_sheet:
+        for label, path in zip(labels, image_paths, strict=True):
+            content.append({"type": "text", "text": label})
+            content.append(_image_content(path.read_bytes()))
+        return content, len(image_paths), 0
+
+    sheet_count = 0
+    for start in range(0, len(image_paths), frames_per_sheet):
+        paths = image_paths[start : start + frames_per_sheet]
+        sheet_labels = labels[start : start + frames_per_sheet]
+        cell_names = [f"F{index:03d}" for index in range(start + 1, start + len(paths) + 1)]
+        mapping = "\n".join(
+            f"{cell_name}: {label}"
+            for cell_name, label in zip(cell_names, sheet_labels, strict=True)
+        )
+        content.append(
+            {
+                "type": "text",
+                "text": (
+                    f"Contact sheet {sheet_count + 1}; cells are in reading order.\n{mapping}"
+                ),
+            }
+        )
+        content.append(_image_content(_contact_sheet_jpeg(paths, cell_names)))
+        sheet_count += 1
+    return content, sheet_count, sheet_count
+
+
+def _image_content(jpeg_bytes: bytes) -> dict:
+    encoded = base64.b64encode(jpeg_bytes).decode("ascii")
+    return {
+        "type": "image_url",
+        "image_url": {"url": f"data:image/jpeg;base64,{encoded}"},
+    }
+
+
+def _contact_sheet_jpeg(paths: list[Path], cell_names: list[str]) -> bytes:
+    columns = 5
+    cell_width = 320
+    frame_height = 180
+    label_height = 24
+    rows = ceil(len(paths) / columns)
+    sheet = Image.new("RGB", (columns * cell_width, rows * (frame_height + label_height)), "black")
+    draw = ImageDraw.Draw(sheet)
+    for index, (path, cell_name) in enumerate(zip(paths, cell_names, strict=True)):
+        column = index % columns
+        row = index // columns
+        left = column * cell_width
+        top = row * (frame_height + label_height)
+        with Image.open(path) as source:
+            frame = ImageOps.contain(source.convert("RGB"), (cell_width, frame_height))
+        x = left + (cell_width - frame.width) // 2
+        y = top + (frame_height - frame.height) // 2
+        sheet.paste(frame, (x, y))
+        draw.rectangle(
+            (left, top + frame_height, left + cell_width, top + frame_height + label_height),
+            fill="black",
+        )
+        draw.text((left + 6, top + frame_height + 5), cell_name, fill="white")
+    output = BytesIO()
+    sheet.save(output, format="JPEG", quality=82, optimize=True)
+    return output.getvalue()

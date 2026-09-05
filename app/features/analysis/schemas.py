@@ -17,7 +17,7 @@ class AnalysisProfileResponse(BaseModel):
 
 class StartAnalysisRequest(BaseModel):
     profile_id: str = "generic"
-    sampling_fps: float = Field(default=3, ge=3, le=10)
+    sampling_fps: float = Field(default=3, ge=3, le=15)
 
 
 class AnalysisSessionResponse(BaseModel):

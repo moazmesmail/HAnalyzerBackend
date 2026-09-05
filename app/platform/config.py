@@ -23,9 +23,14 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
     openrouter_model: str = "qwen/qwen3-vl-32b-instruct"
-    openrouter_timeout_seconds: int = 60
+    openrouter_timeout_seconds: int = 180
     openrouter_max_retries: int = 3
     openrouter_retry_max_wait_seconds: float = 10
+    analysis_batch_max_attempts: int = 2
+    analysis_batch_retry_seconds: float = 2
+    analysis_batch_seconds: float = 10
+    analysis_max_fps: float = 15
+    analysis_contact_sheet_frames: int = 30
     csrf_secret: str = Field(default="change-me-in-production", min_length=12)
     auth_rate_limit_window_seconds: int = 300
     auth_rate_limit_attempts: int = 10
