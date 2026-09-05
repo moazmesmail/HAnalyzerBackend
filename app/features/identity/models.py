@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -12,7 +12,7 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
-    email_normalized: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    identity_normalized: Mapped[str] = mapped_column(String(64), unique=True)
     password_hash: Mapped[str] = mapped_column(Text)
     role: Mapped[str] = mapped_column(String(20), default="user")
     approval_status: Mapped[str] = mapped_column(String(20), default="pending")
@@ -45,6 +45,7 @@ class ApprovalDecision(Base):
 
 class AuthRateLimit(Base):
     __tablename__ = "auth_rate_limits"
+    __table_args__ = (UniqueConstraint("subject_key", "action"),)
 
     id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
     subject_key: Mapped[str] = mapped_column(Text)

@@ -19,6 +19,13 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     session_absolute_minutes: int = 8 * 60
     upload_max_bytes: int = 1024 * 1024 * 1024
+    video_max_duration_seconds: float = 120
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
+    openrouter_model: str = "qwen/qwen3-vl-32b-instruct"
+    openrouter_timeout_seconds: int = 60
+    openrouter_max_retries: int = 3
+    openrouter_retry_max_wait_seconds: float = 10
     csrf_secret: str = Field(default="change-me-in-production", min_length=12)
     auth_rate_limit_window_seconds: int = 300
     auth_rate_limit_attempts: int = 10

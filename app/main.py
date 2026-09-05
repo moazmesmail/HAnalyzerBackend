@@ -5,6 +5,8 @@ from fastapi.responses import JSONResponse
 from app.features.identity.admin_router import router as admin_router
 from app.features.identity.router import router as auth_router
 from app.features.videos.router import router as videos_router
+from app.features.analysis.router import router as analysis_router
+from app.features.analysis.service import recover_interrupted_analyses
 from app.platform.config import get_settings
 from app.platform.errors import register_error_handlers
 from app.platform.logging import configure_logging
@@ -14,6 +16,10 @@ def create_app() -> FastAPI:
     configure_logging()
     settings = get_settings()
     app = FastAPI(title=settings.app_name)
+
+    @app.on_event("startup")
+    def recover_analyses_after_restart() -> None:
+        recover_interrupted_analyses()
 
     app.add_middleware(
         CORSMiddleware,
@@ -49,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(auth_router, prefix=settings.api_prefix)
     app.include_router(admin_router, prefix=settings.api_prefix)
     app.include_router(videos_router, prefix=settings.api_prefix)
+    app.include_router(analysis_router, prefix=settings.api_prefix)
     register_error_handlers(app)
     return app
 

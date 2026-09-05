@@ -4,7 +4,6 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.features.identity.models import User
@@ -12,7 +11,6 @@ from app.features.videos.models import MediaAsset, Video
 from app.features.videos.repository import get_owner_media, get_owner_video, list_owner_videos
 from app.features.videos.schemas import PaginatedVideos, VideoResponse
 from app.platform.config import Settings
-from app.platform.database import SessionLocal
 from app.platform.errors import ApiError
 from app.platform.media.video import assert_no_audio_stream, create_silent_preview, probe_video
 from app.platform.storage.service import preview_path, resolve_private_path, save_upload
@@ -39,6 +37,18 @@ async def create_video(db: Session, owner: User, upload: UploadFile, settings: S
     source_path = resolve_private_path(settings, stored_file.relative_path)
     try:
         metadata = probe_video(source_path)
+        if metadata.duration_seconds is None:
+            raise ApiError(
+                422,
+                "VIDEO_DURATION_UNAVAILABLE",
+                "The video duration could not be determined.",
+            )
+        if metadata.duration_seconds >= settings.video_max_duration_seconds:
+            raise ApiError(
+                422,
+                "VIDEO_TOO_LONG",
+                "Video duration must be under 2 minutes.",
+            )
     except Exception:
         source_path.unlink(missing_ok=True)
         raise
@@ -161,30 +171,3 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
             checksum.update(chunk)
     return checksum.hexdigest()
-
-
-def start_analysis(db: Session, owner: User, video_id: UUID) -> VideoResponse:
-    video = db.scalar(
-        select(Video).where(Video.id == video_id, Video.owner_id == owner.id).with_for_update()
-    )
-    if not video:
-        raise ApiError(404, "VIDEO_NOT_FOUND", "Video was not found.")
-    if video.preparation_status == "ready":
-        raise ApiError(409, "VIDEO_ALREADY_PREPARED", "Visual input is already prepared.")
-    if video.preparation_status == "preparing":
-        raise ApiError(409, "ANALYSIS_IN_PROGRESS", "Video processing is already in progress.")
-    if not video.original_asset_id:
-        raise ApiError(409, "ORIGINAL_MEDIA_MISSING", "Original media is missing.")
-    video.preparation_status = "preparing"
-    video.preparation_error = None
-    video.preparation_retryable = False
-    db.commit()
-    return video_response(video)
-
-
-def run_analysis_preparation(video_id: UUID, settings: Settings) -> None:
-    # The current pipeline prepares visual input; no analysis model is configured yet.
-    with SessionLocal() as db:
-        video = db.get(Video, video_id)
-        if video:
-            prepare_video_preview(db, video, settings)

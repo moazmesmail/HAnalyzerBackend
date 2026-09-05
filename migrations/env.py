@@ -8,6 +8,7 @@ from app.platform.database import Base
 from app.features.identity import models as identity_models
 from app.features.videos import models as video_models
 from app.platform.jobs import models as job_models
+from app.features.analysis import models as analysis_models
 
 config = context.config
 settings = get_settings()
@@ -18,7 +19,7 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-_ = (identity_models, video_models, job_models)
+_ = (identity_models, video_models, job_models, analysis_models)
 
 
 def run_migrations_offline() -> None:

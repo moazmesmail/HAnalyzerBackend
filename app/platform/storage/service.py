@@ -66,3 +66,16 @@ def preview_path(settings: Settings, user_id: UUID, video_id: UUID, asset_id: UU
     target_dir = user_video_dir(settings, user_id, video_id) / "preview"
     target_dir.mkdir(parents=True, exist_ok=True)
     return target_dir / f"{asset_id}.mp4"
+
+
+def analysis_frames_dir(
+    settings: Settings, user_id: UUID, video_id: UUID, analysis_session_id: UUID
+) -> Path:
+    target = (
+        user_video_dir(settings, user_id, video_id)
+        / "analyses"
+        / str(analysis_session_id)
+        / "frames"
+    )
+    target.mkdir(parents=True, exist_ok=True)
+    return target

@@ -6,8 +6,8 @@ from sqlalchemy.orm import Session
 from app.features.identity.models import User, UserSession
 
 
-def get_user_by_email(db: Session, email_normalized: str) -> User | None:
-    return db.scalar(select(User).where(User.email_normalized == email_normalized))
+def get_user_by_identity(db: Session, identity_normalized: str) -> User | None:
+    return db.scalar(select(User).where(User.identity_normalized == identity_normalized))
 
 
 def get_user(db: Session, user_id: UUID) -> User | None:

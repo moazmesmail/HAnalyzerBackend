@@ -22,11 +22,11 @@ def register_route(
     check_auth_rate_limit(
         db,
         "register",
-        credentials.email,
+        credentials.identity,
         request.client.host if request.client else "unknown",
         settings,
     )
-    register(db, credentials.email, credentials.password)
+    register(db, credentials.identity, credentials.password)
     return RegistrationResponse(status="pending")
 
 
@@ -41,11 +41,11 @@ def login_route(
     check_auth_rate_limit(
         db,
         "login",
-        credentials.email,
+        credentials.identity,
         request.client.host if request.client else "unknown",
         settings,
     )
-    return login(db, credentials.email, credentials.password, response, settings)
+    return login(db, credentials.identity, credentials.password, response, settings)
 
 
 @router.get("/me", response_model=AuthResponse)

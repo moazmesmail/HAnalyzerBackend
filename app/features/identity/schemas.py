@@ -1,17 +1,25 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Credentials(BaseModel):
-    email: EmailStr
+    identity: str = Field(min_length=4, max_length=64)
     password: str = Field(min_length=8, max_length=1024)
+
+    @field_validator("identity")
+    @classmethod
+    def validate_identity(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if len(normalized) < 4:
+            raise ValueError("Identity must contain more than 3 characters.")
+        return normalized
 
 
 class CurrentUser(BaseModel):
     id: UUID
-    email: EmailStr
+    identity: str
     role: str
     session_expires_at: datetime | None = None
 
@@ -27,7 +35,7 @@ class RegistrationResponse(BaseModel):
 
 class RegistrationReview(BaseModel):
     id: UUID
-    email: EmailStr
+    identity: str
     status: str
     created_at: datetime
 

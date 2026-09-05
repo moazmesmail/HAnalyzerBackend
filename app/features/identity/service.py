@@ -7,15 +7,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.features.identity.models import ApprovalDecision, AuthRateLimit, User, UserSession
-from app.features.identity.repository import get_session_by_hash, get_user, get_user_by_email
+from app.features.identity.repository import get_session_by_hash, get_user, get_user_by_identity
 from app.features.identity.schemas import AuthResponse, CurrentUser, RegistrationReview
 from app.platform.config import Settings
 from app.platform.errors import ApiError
 from app.platform.security import csrf_token, hash_password, random_token, sha256_text, verify_password
 
 
-def normalize_email(email: str) -> str:
-    return email.strip().lower()
+def normalize_identity(identity: str) -> str:
+    return identity.strip().lower()
 
 
 def session_cookie_name(settings: Settings) -> str:
@@ -25,7 +25,7 @@ def session_cookie_name(settings: Settings) -> str:
 def user_response(user: User, expires_at: datetime | None = None) -> CurrentUser:
     return CurrentUser(
         id=user.id,
-        email=user.email_normalized,
+        identity=user.identity_normalized,
         role=user.role,
         session_expires_at=expires_at,
     )
@@ -34,12 +34,12 @@ def user_response(user: User, expires_at: datetime | None = None) -> CurrentUser
 def check_auth_rate_limit(
     db: Session,
     action: str,
-    email: str,
+    identity: str,
     client_host: str,
     settings: Settings,
 ) -> None:
     now = datetime.now(UTC)
-    subject = sha256_text(f"{action}:{client_host}:{normalize_email(email)}")
+    subject = sha256_text(f"{action}:{client_host}:{normalize_identity(identity)}")
     window = timedelta(seconds=settings.auth_rate_limit_window_seconds)
     limit = db.scalar(
         select(AuthRateLimit).where(
@@ -65,9 +65,9 @@ def check_auth_rate_limit(
         raise ApiError(429, "RATE_LIMITED", "Too many attempts. Try again later.")
 
 
-def register(db: Session, email: str, password: str) -> None:
+def register(db: Session, identity: str, password: str) -> None:
     user = User(
-        email_normalized=normalize_email(email),
+        identity_normalized=normalize_identity(identity),
         password_hash=hash_password(password),
         role="user",
         approval_status="pending",
@@ -78,7 +78,7 @@ def register(db: Session, email: str, password: str) -> None:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        raise ApiError(409, "REGISTRATION_EXISTS", "This email already has a registration.") from exc
+        raise ApiError(409, "REGISTRATION_EXISTS", "This identity already has a registration.") from exc
 
 
 def create_session_response(db: Session, user: User, response: Response, settings: Settings) -> AuthResponse:
@@ -108,10 +108,10 @@ def create_session_response(db: Session, user: User, response: Response, setting
     return AuthResponse(user=user_response(user, expires_at), csrf_token=csrf)
 
 
-def login(db: Session, email: str, password: str, response: Response, settings: Settings) -> AuthResponse:
-    user = get_user_by_email(db, normalize_email(email))
+def login(db: Session, identity: str, password: str, response: Response, settings: Settings) -> AuthResponse:
+    user = get_user_by_identity(db, normalize_identity(identity))
     if not user or not verify_password(password, user.password_hash):
-        raise ApiError(401, "INVALID_CREDENTIALS", "Invalid email or password.")
+        raise ApiError(401, "INVALID_CREDENTIALS", "Invalid identity or password.")
 
     if user.approval_status == "pending":
         raise ApiError(403, "ACCOUNT_PENDING", "This account is waiting for owner approval.")
@@ -182,7 +182,7 @@ def decide_registration(
 def registration_review(user: User) -> RegistrationReview:
     return RegistrationReview(
         id=user.id,
-        email=user.email_normalized,
+        identity=user.identity_normalized,
         status=user.approval_status,
         created_at=user.created_at,
     )

@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -10,8 +10,6 @@ from app.features.identity.models import User
 from app.features.videos.schemas import PaginatedVideos, VideoResponse
 from app.features.videos.service import (
     create_video,
-    start_analysis,
-    run_analysis_preparation,
     get_media_path,
     get_video_detail,
     list_videos,
@@ -84,21 +82,3 @@ def head_media_route(
 ) -> FileResponse:
     path, content_type = get_media_path(db, owner, asset_id, settings)
     return FileResponse(path, media_type=content_type)
-
-
-@router.post(
-    "/videos/{video_id}/analyze",
-    response_model=VideoResponse,
-    status_code=202,
-    dependencies=[Depends(csrf_protect)],
-)
-def start_analysis_route(
-    video_id: UUID,
-    background_tasks: BackgroundTasks,
-    owner: Annotated[User, Depends(require_approved_user)],
-    db: Annotated[Session, Depends(get_db)],
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> VideoResponse:
-    result = start_analysis(db, owner, video_id)
-    background_tasks.add_task(run_analysis_preparation, video_id, settings)
-    return result
