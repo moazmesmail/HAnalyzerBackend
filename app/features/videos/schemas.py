@@ -12,6 +12,7 @@ class VideoResponse(BaseModel):
     preparation_status: str
     preparation_error: str | None = None
     preparation_retryable: bool = False
+    original_asset_id: UUID | None = None
     preview_asset_id: UUID | None = None
 
 

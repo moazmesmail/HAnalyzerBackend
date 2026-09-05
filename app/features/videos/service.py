@@ -1,8 +1,10 @@
 import hashlib
+import mimetypes
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.features.identity.models import User
@@ -10,6 +12,7 @@ from app.features.videos.models import MediaAsset, Video
 from app.features.videos.repository import get_owner_media, get_owner_video, list_owner_videos
 from app.features.videos.schemas import PaginatedVideos, VideoResponse
 from app.platform.config import Settings
+from app.platform.database import SessionLocal
 from app.platform.errors import ApiError
 from app.platform.media.video import assert_no_audio_stream, create_silent_preview, probe_video
 from app.platform.storage.service import preview_path, resolve_private_path, save_upload
@@ -24,6 +27,7 @@ def video_response(video: Video) -> VideoResponse:
         preparation_status=video.preparation_status,
         preparation_error=video.preparation_error,
         preparation_retryable=video.preparation_retryable,
+        original_asset_id=video.original_asset_id,
         preview_asset_id=video.preview_asset_id,
     )
 
@@ -33,7 +37,11 @@ async def create_video(db: Session, owner: User, upload: UploadFile, settings: S
     original_asset_id = uuid4()
     stored_file = await save_upload(settings, upload, owner.id, video_id, original_asset_id)
     source_path = resolve_private_path(settings, stored_file.relative_path)
-    metadata = probe_video(source_path)
+    try:
+        metadata = probe_video(source_path)
+    except Exception:
+        source_path.unlink(missing_ok=True)
+        raise
 
     video = Video(
         id=video_id,
@@ -48,7 +56,7 @@ async def create_video(db: Session, owner: User, upload: UploadFile, settings: S
         owner_id=owner.id,
         kind="original",
         relative_path=stored_file.relative_path,
-        content_type=upload.content_type or "application/octet-stream",
+        content_type=mimetypes.guess_type(upload.filename or "")[0] or upload.content_type or "application/octet-stream",
         size_bytes=stored_file.size_bytes,
         checksum_sha256=stored_file.checksum_sha256,
     )
@@ -60,8 +68,6 @@ async def create_video(db: Session, owner: User, upload: UploadFile, settings: S
     db.commit()
     db.refresh(video)
 
-    prepare_video_preview(db, video, settings)
-    db.refresh(video)
     return video_response(video)
 
 
@@ -85,9 +91,10 @@ def prepare_video_preview(db: Session, video: Video, settings: Settings) -> None
     try:
         create_silent_preview(source, target)
         assert_no_audio_stream(target)
-    except ApiError as exc:
+    except Exception as exc:
+        target.unlink(missing_ok=True)
         video.preparation_status = "failed"
-        video.preparation_error = exc.message
+        video.preparation_error = exc.message if isinstance(exc, ApiError) else "Video preparation failed."
         video.preparation_retryable = True
         db.commit()
         return
@@ -154,3 +161,30 @@ def file_sha256(path: Path) -> str:
         for chunk in iter(lambda: input_file.read(1024 * 1024), b""):
             checksum.update(chunk)
     return checksum.hexdigest()
+
+
+def start_analysis(db: Session, owner: User, video_id: UUID) -> VideoResponse:
+    video = db.scalar(
+        select(Video).where(Video.id == video_id, Video.owner_id == owner.id).with_for_update()
+    )
+    if not video:
+        raise ApiError(404, "VIDEO_NOT_FOUND", "Video was not found.")
+    if video.preparation_status == "ready":
+        raise ApiError(409, "VIDEO_ALREADY_PREPARED", "Visual input is already prepared.")
+    if video.preparation_status == "preparing":
+        raise ApiError(409, "ANALYSIS_IN_PROGRESS", "Video processing is already in progress.")
+    if not video.original_asset_id:
+        raise ApiError(409, "ORIGINAL_MEDIA_MISSING", "Original media is missing.")
+    video.preparation_status = "preparing"
+    video.preparation_error = None
+    video.preparation_retryable = False
+    db.commit()
+    return video_response(video)
+
+
+def run_analysis_preparation(video_id: UUID, settings: Settings) -> None:
+    # The current pipeline prepares visual input; no analysis model is configured yet.
+    with SessionLocal() as db:
+        video = db.get(Video, video_id)
+        if video:
+            prepare_video_preview(db, video, settings)
