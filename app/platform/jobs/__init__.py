@@ -1,0 +1,1 @@
+"""Minimal durable job models."""
