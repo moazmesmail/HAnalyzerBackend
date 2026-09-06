@@ -15,8 +15,10 @@ from app.features.analysis.schemas import (
     ModelUsageResponse,
     StartAnalysisRequest,
     StructuredAnalysisResponse,
+    SummaryVideoResponse,
 )
 from app.features.analysis.service import get_report, get_results, get_session, get_structured_results, get_usage, get_video_sessions, retry_analysis, run_analysis, start_analysis
+from app.features.analysis.summary import get_summary_video, run_summary_video, start_summary_video
 from app.features.identity.dependencies import csrf_protect, require_approved_user
 from app.features.identity.models import User
 from app.platform.config import Settings, get_settings
@@ -89,6 +91,34 @@ def analysis_usage(session_id: UUID, owner: Annotated[User, Depends(require_appr
 @router.get("/analyses/{session_id}/report", response_model=AnalysisReportResponse)
 def analysis_report(session_id: UUID, owner: Annotated[User, Depends(require_approved_user)], db: Annotated[Session, Depends(get_db)]) -> AnalysisReportResponse:
     return get_report(db, owner, session_id)
+
+
+@router.post(
+    "/analyses/{session_id}/summary-video",
+    response_model=SummaryVideoResponse,
+    status_code=202,
+    dependencies=[Depends(csrf_protect)],
+)
+def create_summary_video(
+    session_id: UUID,
+    background_tasks: BackgroundTasks,
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> SummaryVideoResponse:
+    result = start_summary_video(db, owner, session_id, settings)
+    if result.status == "pending":
+        background_tasks.add_task(run_summary_video, result.id, settings)
+    return result
+
+
+@router.get("/analyses/{session_id}/summary-video", response_model=SummaryVideoResponse)
+def summary_video_detail(
+    session_id: UUID,
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> SummaryVideoResponse:
+    return get_summary_video(db, owner, session_id)
 
 
 @router.get("/analyses/{session_id}/structured", response_model=StructuredAnalysisResponse)

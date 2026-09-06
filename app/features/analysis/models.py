@@ -402,3 +402,35 @@ class AnalysisReport(Base):
     error: Mapped[str | None] = mapped_column(Text)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SummaryVideo(Base):
+    """A deterministic silent highlight reel derived from saved analysis evidence."""
+
+    __tablename__ = "summary_videos"
+
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid()
+    )
+    session_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True),
+        ForeignKey("analysis_sessions.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    owner_id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    asset_id: Mapped[UUID | None] = mapped_column(
+        PgUUID(as_uuid=True), ForeignKey("media_assets.id", ondelete="SET NULL")
+    )
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    selected_segments: Mapped[list] = mapped_column(JSON, default=list)
+    duration_seconds: Mapped[Decimal | None] = mapped_column(Numeric(12, 3))
+    analysis_revision: Mapped[int] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

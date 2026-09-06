@@ -96,6 +96,41 @@ def assert_no_audio_stream(path: Path) -> None:
         raise ApiError(500, "PREVIEW_HAS_AUDIO", "Generated preview contains audio.")
 
 
+def create_silent_summary(source: Path, target: Path, segments: list[dict]) -> None:
+    """Render chronological source intervals into one browser-compatible silent video."""
+    if not segments:
+        raise ApiError(422, "NO_HIGHLIGHTS", "No highlight intervals were selected.")
+
+    filters = []
+    inputs = []
+    for index, segment in enumerate(segments):
+        start = float(segment["start_seconds"])
+        end = float(segment["end_seconds"])
+        filters.append(
+            f"[0:v:0]trim=start={start:.3f}:end={end:.3f},setpts=PTS-STARTPTS,"
+            f"scale=trunc(iw/2)*2:trunc(ih/2)*2[v{index}]"
+        )
+        inputs.append(f"[v{index}]")
+    filters.append(f"{''.join(inputs)}concat=n={len(inputs)}:v=1:a=0[outv]")
+
+    command = [
+        "ffmpeg", "-y", "-i", str(source), "-filter_complex", ";".join(filters),
+        "-map", "[outv]", "-an", "-sn", "-dn", "-c:v", "libx264",
+        "-preset", "veryfast", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
+        str(target),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        logger.error(
+            "ffmpeg_summary_failed return_code=%d stderr=%s",
+            result.returncode,
+            result.stderr[-4000:],
+        )
+        raise ApiError(500, "SUMMARY_VIDEO_FAILED", "Summary video generation failed.")
+
+    assert_no_audio_stream(target)
+
+
 def extract_sampled_frames(
     source: Path, target_dir: Path, sampling_fps: float, max_frames: int
 ) -> list[ExtractedFrame]:

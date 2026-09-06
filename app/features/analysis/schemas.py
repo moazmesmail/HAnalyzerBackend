@@ -131,7 +131,7 @@ class DomainAttributes(BaseModel):
     obstacle_number: str | None = None
     obstacle_type: str | None = None
     combination_label: str | None = None
-    color: str | None = None
+    color: str | list[str] | None = None
     position: str | None = None
     approach_direction: str | None = None
     difficulty: str | None = None
@@ -248,6 +248,27 @@ class AnalysisReportResponse(BaseModel):
     report_version: str
     content: dict[str, Any]
     limitations: list[str]
+
+
+class SummaryVideoSegmentResponse(BaseModel):
+    start_seconds: float
+    end_seconds: float
+    artifact_ids: list[UUID]
+    titles: list[str]
+
+
+class SummaryVideoResponse(BaseModel):
+    id: UUID
+    session_id: UUID
+    status: str
+    asset_id: UUID | None = None
+    selected_segments: list[SummaryVideoSegmentResponse]
+    duration_seconds: float | None = None
+    analysis_revision: int
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
 
 
 class DeepReportProposal(BaseModel):
