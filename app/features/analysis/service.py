@@ -93,12 +93,8 @@ def start_analysis(
         raise ApiError(404, "VIDEO_NOT_FOUND", "Video was not found.")
     if not video.original_asset_id:
         raise ApiError(409, "ORIGINAL_MEDIA_MISSING", "Original media is missing.")
-    if video.duration_seconds is None or float(video.duration_seconds) >= settings.video_max_duration_seconds:
-        raise ApiError(
-            422,
-            "VIDEO_TOO_LONG",
-            "Only videos under "+str(settings.video_max_duration_seconds/60)+" minutes can be analyzed.",
-        )
+    if video.duration_seconds is None:
+        raise ApiError(422, "VIDEO_DURATION_UNAVAILABLE", "The video duration is unavailable.")
 
     profile = PROFILES.get(request.profile_id)
     if not profile:
@@ -199,7 +195,7 @@ def _run_analysis(session_id: UUID, settings: Settings) -> None:
                 source,
                 output_dir,
                 float(session.sampling_fps),
-                round(settings.video_max_duration_seconds * settings.analysis_max_fps),
+                max(1, round(float(video.duration_seconds) * float(session.sampling_fps)) + 1),
             )
             logger.info(
                 "analysis_stage_completed session_id=%s stage=%s frame_count=%d",

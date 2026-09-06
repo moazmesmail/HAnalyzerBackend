@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     secure_cookies: bool = False
     session_absolute_minutes: int = 8 * 60
     upload_max_bytes: int = 1024 * 1024 * 1024
-    video_max_duration_seconds: float = 120
     openrouter_api_key: str | None = None
     openrouter_base_url: str = "https://openrouter.ai/api/v1/chat/completions"
     openrouter_model: str = "qwen/qwen3-vl-32b-instruct"

@@ -43,12 +43,6 @@ async def create_video(db: Session, owner: User, upload: UploadFile, settings: S
                 "VIDEO_DURATION_UNAVAILABLE",
                 "The video duration could not be determined.",
             )
-        if metadata.duration_seconds >= settings.video_max_duration_seconds:
-            raise ApiError(
-                422,
-                "VIDEO_TOO_LONG",
-                "Video duration must be under 2 minutes.",
-            )
     except Exception:
         source_path.unlink(missing_ok=True)
         raise
