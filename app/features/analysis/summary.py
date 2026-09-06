@@ -18,9 +18,9 @@ from app.platform.storage.service import resolve_private_path, summary_video_pat
 
 logger = logging.getLogger(__name__)
 
-PRE_ROLL_SECONDS = 2.0
-POST_ROLL_SECONDS = 2.0
-MAX_HIGHLIGHTS = 8
+PRE_ROLL_SECONDS = 3.0
+POST_ROLL_SECONDS = 5.0
+MERGE_GAP_SECONDS = 1.0
 
 
 def _response(item: SummaryVideo) -> SummaryVideoResponse:
@@ -54,32 +54,17 @@ def select_highlight_segments(
     artifacts: list[AnalysisArtifact], report: AnalysisReport | None, video_duration: float
 ) -> list[dict]:
     """Select clips with fixed rules so identical analysis data gives identical output."""
-    report_ids = {
-        str(moment.get("artifact_id"))
-        for moment in ((report.content or {}).get("key_moments", []) if report else [])
-        if isinstance(moment, dict) and moment.get("artifact_id")
-    }
+    del report  # Kept in the signature for compatibility with existing callers.
     candidates = []
     for artifact in artifacts:
         # Jump artifacts carry the model-selected start/end timestamps. Excluding
         # every other category prevents general competition footage entering the reel.
         if artifact.category != "jump":
             continue
-        importance = float(artifact.importance)
-        confidence = float(artifact.confidence)
-        report_selected = str(artifact.id) in report_ids
-        if confidence < 0.50:
-            continue
-        score = (
-            importance * 0.65
-            + confidence * 0.35
-            + (0.20 if report_selected else 0)
-        )
-        candidates.append((score, float(artifact.start_seconds), str(artifact.id), artifact))
+        candidates.append((float(artifact.start_seconds), str(artifact.id), artifact))
 
-    # Stable tie-breakers make selection reproducible across database executions.
-    candidates.sort(key=lambda item: (-item[0], item[1], item[2]))
-    selected = candidates[:MAX_HIGHLIGHTS]
+    # Keep every detected jump and make ordering reproducible.
+    selected = sorted(candidates, key=lambda item: (item[0], item[1]))
     intervals = [
         {
             "start_seconds": max(0.0, float(item.start_seconds) - PRE_ROLL_SECONDS),
@@ -87,13 +72,13 @@ def select_highlight_segments(
             "artifact_ids": [str(item.id)],
             "titles": [item.title],
         }
-        for _, _, _, item in selected
+        for _, _, item in selected
     ]
     intervals.sort(key=lambda item: (item["start_seconds"], item["end_seconds"]))
 
     merged: list[dict] = []
     for interval in intervals:
-        if merged and interval["start_seconds"] <= merged[-1]["end_seconds"] + 0.5:
+        if merged and interval["start_seconds"] <= merged[-1]["end_seconds"] + MERGE_GAP_SECONDS:
             merged[-1]["end_seconds"] = max(merged[-1]["end_seconds"], interval["end_seconds"])
             merged[-1]["artifact_ids"].extend(interval["artifact_ids"])
             merged[-1]["titles"].extend(interval["titles"])
@@ -115,7 +100,7 @@ def start_summary_video(
     report = db.scalar(select(AnalysisReport).where(AnalysisReport.session_id == session.id))
     segments = select_highlight_segments(artifacts, report, float(video.duration_seconds or 0))
     if not segments:
-        raise ApiError(422, "NO_HIGHLIGHTS", "No confidently detected horse jumps were found.")
+        raise ApiError(422, "NO_HIGHLIGHTS", "No detected horse jumps were found.")
 
     existing = db.scalar(select(SummaryVideo).where(SummaryVideo.session_id == session.id))
     if existing and existing.status in {"pending", "processing"}:
