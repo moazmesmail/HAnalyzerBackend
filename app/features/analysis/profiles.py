@@ -10,6 +10,9 @@ GENERIC_CAPABILITIES = {
     "events": True,
     "jumps": False,
     "comparisons": False,
+    "structured_domain_results": True,
+    "deep_report": True,
+    "audio_transcription": False,
     "report": True,
     "usage": True,
 }
@@ -17,7 +20,7 @@ GENERIC_CAPABILITIES = {
 PROFILES = {
     "generic": AnalysisProfileResponse(
         id="generic",
-        version="1.0",
+        version="2.0",
         display_name="Generic visual sampling",
         description="Analyzes timestamped frame batches for visible subjects, actions, text, and events.",
         minimum_fps=3,
@@ -27,7 +30,7 @@ PROFILES = {
     ),
     "equestrian_show_jumping": AnalysisProfileResponse(
         id="equestrian_show_jumping",
-        version="1.0",
+        version="2.0",
         display_name="Equestrian show jumping",
         description="Analyzes riders, horses, runs, obstacles, jumps, visible faults, technique, and displayed results.",
         minimum_fps=3,

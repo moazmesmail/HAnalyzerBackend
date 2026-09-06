@@ -13,6 +13,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
@@ -341,3 +342,63 @@ class ModelRequest(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+
+
+class AnalysisBatchJob(Base):
+    """Execution state for one fixed-duration visual analysis window."""
+
+    __tablename__ = "analysis_batch_jobs"
+    __table_args__ = (UniqueConstraint("session_id", "batch_number"),)
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    session_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("analysis_sessions.id", ondelete="CASCADE"), index=True)
+    batch_number: Mapped[int] = mapped_column(Integer)
+    start_seconds: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    end_seconds: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    source_frame_count: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0)
+    error_code: Mapped[str | None] = mapped_column(String(80))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AnalysisArtifact(Base):
+    """A typed, evidence-backed domain record extracted from the video."""
+
+    __tablename__ = "analysis_artifacts"
+    __table_args__ = (Index("ix_analysis_artifacts_session_category_time", "session_id", "category", "start_seconds"),)
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    session_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("analysis_sessions.id", ondelete="CASCADE"), index=True)
+    batch_job_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("analysis_batch_jobs.id", ondelete="SET NULL"))
+    category: Mapped[str] = mapped_column(String(40))
+    subtype: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(200))
+    start_seconds: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    end_seconds: Mapped[Decimal] = mapped_column(Numeric(12, 3))
+    observation: Mapped[str] = mapped_column(Text)
+    interpretation: Mapped[str | None] = mapped_column(Text)
+    attributes: Mapped[dict] = mapped_column(JSON, default=dict)
+    confidence: Mapped[Decimal] = mapped_column(Numeric(5, 4))
+    importance: Mapped[Decimal] = mapped_column(Numeric(5, 4), default=0)
+    evidence_frame_ids: Mapped[list] = mapped_column(JSON, default=list)
+    limitations: Mapped[list] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AnalysisReport(Base):
+    """Versioned deep report generated only from saved structured evidence."""
+
+    __tablename__ = "analysis_reports"
+
+    id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), primary_key=True, server_default=func.gen_random_uuid())
+    session_id: Mapped[UUID] = mapped_column(PgUUID(as_uuid=True), ForeignKey("analysis_sessions.id", ondelete="CASCADE"), unique=True, index=True)
+    version: Mapped[str] = mapped_column(String(30), default="2.0")
+    status: Mapped[str] = mapped_column(String(20), default="pending")
+    content: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str | None] = mapped_column(Text)
+    generated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

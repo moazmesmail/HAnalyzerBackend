@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.features.analysis.profiles import PROFILES
@@ -14,8 +14,9 @@ from app.features.analysis.schemas import (
     AnalysisSessionResponse,
     ModelUsageResponse,
     StartAnalysisRequest,
+    StructuredAnalysisResponse,
 )
-from app.features.analysis.service import get_report, get_results, get_session, get_usage, get_video_sessions, retry_analysis, run_analysis, start_analysis
+from app.features.analysis.service import get_report, get_results, get_session, get_structured_results, get_usage, get_video_sessions, retry_analysis, run_analysis, start_analysis
 from app.features.identity.dependencies import csrf_protect, require_approved_user
 from app.features.identity.models import User
 from app.platform.config import Settings, get_settings
@@ -88,6 +89,16 @@ def analysis_usage(session_id: UUID, owner: Annotated[User, Depends(require_appr
 @router.get("/analyses/{session_id}/report", response_model=AnalysisReportResponse)
 def analysis_report(session_id: UUID, owner: Annotated[User, Depends(require_approved_user)], db: Annotated[Session, Depends(get_db)]) -> AnalysisReportResponse:
     return get_report(db, owner, session_id)
+
+
+@router.get("/analyses/{session_id}/structured", response_model=StructuredAnalysisResponse)
+def analysis_structured_results(
+    session_id: UUID,
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+    category: Annotated[str | None, Query(max_length=40)] = None,
+) -> StructuredAnalysisResponse:
+    return get_structured_results(db, owner, session_id, category)
 
 
 @router.post("/analyses/{session_id}/retry", response_model=AnalysisSessionResponse, status_code=202, dependencies=[Depends(csrf_protect)])

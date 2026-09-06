@@ -40,6 +40,8 @@ def analyze_images(
     image_paths: list[Path],
     output_schema: dict,
     image_labels: list[str] | None = None,
+    max_output_tokens: int | None = None,
+    provider_sort: str | None = None,
 ) -> StructuredResponse:
     if not settings.openrouter_api_key:
         raise ApiError(503, "AI_NOT_CONFIGURED", "OpenRouter is not configured.")
@@ -52,6 +54,9 @@ def analyze_images(
         image_paths,
         image_labels,
         settings.analysis_contact_sheet_frames,
+        settings.analysis_contact_sheet_cell_width,
+        settings.analysis_contact_sheet_cell_height,
+        settings.analysis_contact_sheet_jpeg_quality,
     )
 
     system_prompt = (
@@ -59,6 +64,8 @@ def analyze_images(
         "explanation, matching this JSON schema exactly: "
         f"{json.dumps(output_schema, separators=(',', ':'))}"
     )
+    effective_max_output_tokens = max_output_tokens or settings.openrouter_max_output_tokens
+    effective_provider_sort = provider_sort or settings.openrouter_provider_sort
     payload = {
         "model": settings.openrouter_model,
         "messages": [
@@ -66,7 +73,8 @@ def analyze_images(
             {"role": "user", "content": content},
         ],
         "temperature": 0.0,
-        # "max_tokens": 2500,
+        "max_tokens": effective_max_output_tokens,
+        "provider": {"sort": effective_provider_sort},
         "usage": {"include": True},
     }
     started = time.monotonic()
@@ -74,11 +82,16 @@ def analyze_images(
     parsed: dict | None = None
     last_error: Exception | None = None
     logger.info(
-        "openrouter_request_initiated model=%s source_frame_count=%d request_image_count=%d contact_sheet_count=%d timeout_seconds=%d",
+        "openrouter_request_initiated model=%s source_frame_count=%d request_image_count=%d contact_sheet_count=%d cell_size=%dx%d jpeg_quality=%d max_output_tokens=%d provider_sort=%s timeout_seconds=%d",
         settings.openrouter_model,
         len(image_paths),
         request_image_count,
         contact_sheet_count,
+        settings.analysis_contact_sheet_cell_width,
+        settings.analysis_contact_sheet_cell_height,
+        settings.analysis_contact_sheet_jpeg_quality,
+        effective_max_output_tokens,
+        effective_provider_sort,
         settings.openrouter_timeout_seconds,
     )
     for attempt in range(1, settings.openrouter_max_retries + 2):
@@ -100,6 +113,16 @@ def analyze_images(
                     provider_error.get("message", "Unknown provider error")
                     if isinstance(provider_error, dict)
                     else str(provider_error)
+                )
+                metadata = provider_error.get("metadata") if isinstance(provider_error, dict) else None
+                logger.warning(
+                    "openrouter_provider_error response_id=%s code=%s provider=%s metadata_keys=%s duration_ms=%d message=%s",
+                    body.get("id"),
+                    provider_error.get("code") if isinstance(provider_error, dict) else None,
+                    metadata.get("provider_name") if isinstance(metadata, dict) else None,
+                    sorted(metadata.keys()) if isinstance(metadata, dict) else [],
+                    round((time.monotonic() - started) * 1000),
+                    message.replace("\n", " ")[:500],
                 )
                 raise ApiError(502, "AI_PROVIDER_ERROR", f"OpenRouter error: {message[:300]}")
             raw_content = body["choices"][0]["message"]["content"]
@@ -140,11 +163,14 @@ def analyze_images(
                 time.sleep(wait_seconds)
         except (httpx.RequestError, ApiError, KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             last_error = exc
+            choice = body.get("choices", [{}])[0] if isinstance(body, dict) else {}
             logger.warning(
-                "openrouter_invalid_response model=%s attempt=%d error_type=%s response_keys=%s",
+                "openrouter_invalid_response model=%s attempt=%d error_type=%s finish_reason=%s content_chars=%s response_keys=%s",
                 settings.openrouter_model,
                 attempt,
                 type(exc).__name__,
+                choice.get("finish_reason") if isinstance(choice, dict) else None,
+                len(raw_content) if isinstance(raw_content, str) else None,
                 sorted(body.keys()) if isinstance(body, dict) else [],
             )
             if raw_content is not None:
@@ -237,12 +263,17 @@ def _parse_json_object(content: object) -> dict:
         ).strip()
     try:
         parsed = _load_model_json(candidate)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as original_error:
         start = candidate.find("{")
         end = candidate.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        parsed = _load_model_json(candidate[start : end + 1])
+        try:
+            if start < 0 or end <= start:
+                raise original_error
+            parsed = _load_model_json(candidate[start : end + 1])
+        except json.JSONDecodeError:
+            parsed = _recover_truncated_analysis_json(candidate)
+            if parsed is None:
+                raise original_error
     if not isinstance(parsed, dict):
         raise TypeError("Structured response is not an object.")
     return parsed
@@ -265,15 +296,83 @@ def _load_model_json(candidate: str) -> object:
         return parsed
 
 
+def _recover_truncated_analysis_json(candidate: str) -> dict | None:
+    """Keep complete extraction records when generation ends midway through JSON."""
+    candidate = candidate.replace("\\'", "'")
+    summary = _decode_json_field(candidate, "summary")
+    observations = _decode_json_field(candidate, "observations")
+    domain_records = _decode_complete_array_items(candidate, "domain_records")
+    if not isinstance(summary, str) or not isinstance(observations, list):
+        return None
+    if not domain_records and '"domain_records"' not in candidate:
+        return None
+    logger.warning(
+        "openrouter_response_repaired repair=truncated_analysis_json observations=%d domain_records=%d",
+        len(observations),
+        len(domain_records),
+    )
+    return {
+        "summary": summary,
+        "observations": observations,
+        "domain_records": domain_records,
+    }
+
+
+def _decode_json_field(candidate: str, field: str) -> object | None:
+    marker = f'"{field}"'
+    start = candidate.find(marker)
+    if start < 0:
+        return None
+    colon = candidate.find(":", start + len(marker))
+    if colon < 0:
+        return None
+    position = colon + 1
+    while position < len(candidate) and candidate[position] in " \r\n\t":
+        position += 1
+    try:
+        value, _ = json.JSONDecoder().raw_decode(candidate, position)
+    except json.JSONDecodeError:
+        return None
+    return value
+
+
+def _decode_complete_array_items(candidate: str, field: str) -> list[dict]:
+    marker = f'"{field}"'
+    start = candidate.find(marker)
+    if start < 0:
+        return []
+    array_start = candidate.find("[", start + len(marker))
+    if array_start < 0:
+        return []
+    decoder = json.JSONDecoder()
+    position = array_start + 1
+    items: list[dict] = []
+    while position < len(candidate):
+        while position < len(candidate) and candidate[position] in " \r\n\t,":
+            position += 1
+        if position >= len(candidate) or candidate[position] == "]":
+            break
+        try:
+            value, position = decoder.raw_decode(candidate, position)
+        except json.JSONDecodeError:
+            break
+        if isinstance(value, dict):
+            items.append(value)
+    return items
+
+
 def _build_image_content(
     prompt: str,
     image_paths: list[Path],
     image_labels: list[str] | None,
     frames_per_sheet: int,
+    cell_width: int = 240,
+    frame_height: int = 135,
+    jpeg_quality: int = 70,
 ) -> tuple[list[dict], int, int]:
     content: list[dict] = [{"type": "text", "text": prompt}]
     labels = image_labels or [f"Frame {index + 1}" for index in range(len(image_paths))]
-    if frames_per_sheet <= 1 or len(image_paths) <= frames_per_sheet:
+    if frames_per_sheet <= 1 or len(image_paths) <= 1:
         for label, path in zip(labels, image_paths, strict=True):
             content.append({"type": "text", "text": label})
             content.append(_image_content(path.read_bytes()))
@@ -296,7 +395,17 @@ def _build_image_content(
                 ),
             }
         )
-        content.append(_image_content(_contact_sheet_jpeg(paths, cell_names)))
+        content.append(
+            _image_content(
+                _contact_sheet_jpeg(
+                    paths,
+                    cell_names,
+                    cell_width,
+                    frame_height,
+                    jpeg_quality,
+                )
+            )
+        )
         sheet_count += 1
     return content, sheet_count, sheet_count
 
@@ -309,11 +418,15 @@ def _image_content(jpeg_bytes: bytes) -> dict:
     }
 
 
-def _contact_sheet_jpeg(paths: list[Path], cell_names: list[str]) -> bytes:
+def _contact_sheet_jpeg(
+    paths: list[Path],
+    cell_names: list[str],
+    cell_width: int = 240,
+    frame_height: int = 135,
+    jpeg_quality: int = 70,
+) -> bytes:
     columns = 5
-    cell_width = 320
-    frame_height = 180
-    label_height = 24
+    label_height = 20
     rows = ceil(len(paths) / columns)
     sheet = Image.new("RGB", (columns * cell_width, rows * (frame_height + label_height)), "black")
     draw = ImageDraw.Draw(sheet)
@@ -331,7 +444,7 @@ def _contact_sheet_jpeg(paths: list[Path], cell_names: list[str]) -> bytes:
             (left, top + frame_height, left + cell_width, top + frame_height + label_height),
             fill="black",
         )
-        draw.text((left + 6, top + frame_height + 5), cell_name, fill="white")
+        draw.text((left + 5, top + frame_height + 3), cell_name, fill="white")
     output = BytesIO()
-    sheet.save(output, format="JPEG", quality=82, optimize=True)
+    sheet.save(output, format="JPEG", quality=jpeg_quality, optimize=True)
     return output.getvalue()
