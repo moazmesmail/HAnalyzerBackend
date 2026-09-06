@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, field_validator
 
 class Credentials(BaseModel):
     identity: str = Field(min_length=4, max_length=64)
-    password: str = Field(min_length=8, max_length=1024)
+    password: str = Field(min_length=1, max_length=1024)
 
     @field_validator("identity")
     @classmethod
@@ -16,6 +16,10 @@ class Credentials(BaseModel):
         if len(normalized) < 4:
             raise ValueError("Identity must contain more than 3 characters.")
         return normalized
+
+
+class RegistrationCredentials(Credentials):
+    password: str = Field(min_length=8, max_length=1024)
 
 
 class CurrentUser(BaseModel):

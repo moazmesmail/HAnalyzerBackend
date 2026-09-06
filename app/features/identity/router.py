@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.features.identity.dependencies import csrf_protect, current_session
-from app.features.identity.schemas import AuthResponse, Credentials, RegistrationResponse
+from app.features.identity.schemas import AuthResponse, Credentials, RegistrationCredentials, RegistrationResponse
 from app.features.identity.service import check_auth_rate_limit, login, logout, register, user_response
 from app.platform.config import Settings, get_settings
 from app.platform.database import get_db
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/register", response_model=RegistrationResponse, status_code=201)
 def register_route(
     request: Request,
-    credentials: Credentials,
+    credentials: RegistrationCredentials,
     db: Annotated[Session, Depends(get_db)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> RegistrationResponse:
