@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
@@ -20,7 +21,7 @@ class Credentials(BaseModel):
 class CurrentUser(BaseModel):
     id: UUID
     identity: str
-    role: str
+    role: Literal["user", "coach", "admin"]
     session_expires_at: datetime | None = None
 
 
