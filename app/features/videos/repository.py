@@ -6,11 +6,11 @@ from sqlalchemy.orm import Session
 from app.features.videos.models import MediaAsset, Video
 
 
-def list_owner_videos(db: Session, owner_id: UUID, limit: int = 50) -> list[Video]:
+def list_owner_videos(db: Session, owner_id: UUID, archived: bool = False, limit: int = 50) -> list[Video]:
     return list(
         db.scalars(
             select(Video)
-            .where(Video.owner_id == owner_id)
+            .where(Video.owner_id == owner_id, Video.archived_at.is_not(None) if archived else Video.archived_at.is_(None))
             .order_by(Video.created_at.desc())
             .limit(limit)
         )

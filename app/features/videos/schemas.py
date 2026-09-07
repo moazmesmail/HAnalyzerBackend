@@ -14,6 +14,7 @@ class VideoResponse(BaseModel):
     preparation_retryable: bool = False
     original_asset_id: UUID | None = None
     preview_asset_id: UUID | None = None
+    archived_at: datetime | None = None
 
 
 class PaginatedVideos(BaseModel):

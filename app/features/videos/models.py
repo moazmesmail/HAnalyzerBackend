@@ -22,6 +22,7 @@ class Video(Base):
     preparation_retryable: Mapped[bool] = mapped_column(Boolean, default=False)
     original_asset_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("media_assets.id"))
     preview_asset_id: Mapped[UUID | None] = mapped_column(PgUUID(as_uuid=True), ForeignKey("media_assets.id"))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

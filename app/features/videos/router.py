@@ -12,8 +12,10 @@ from app.features.videos.service import (
     create_video,
     get_media_path,
     get_video_detail,
+    list_archived_videos,
     list_videos,
     retry_preparation,
+    set_video_archived,
 )
 from app.platform.config import Settings, get_settings
 from app.platform.database import get_db
@@ -39,6 +41,14 @@ def list_videos_route(
     return list_videos(db, owner)
 
 
+@router.get("/videos/archive", response_model=PaginatedVideos)
+def list_archived_videos_route(
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> PaginatedVideos:
+    return list_archived_videos(db, owner)
+
+
 @router.get("/videos/{video_id}", response_model=VideoResponse)
 def get_video_route(
     video_id: UUID,
@@ -46,6 +56,32 @@ def get_video_route(
     db: Annotated[Session, Depends(get_db)],
 ) -> VideoResponse:
     return get_video_detail(db, owner, video_id)
+
+
+@router.post(
+    "/videos/{video_id}/archive",
+    response_model=VideoResponse,
+    dependencies=[Depends(csrf_protect)],
+)
+def archive_video_route(
+    video_id: UUID,
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> VideoResponse:
+    return set_video_archived(db, owner, video_id, True)
+
+
+@router.post(
+    "/videos/{video_id}/restore",
+    response_model=VideoResponse,
+    dependencies=[Depends(csrf_protect)],
+)
+def restore_video_route(
+    video_id: UUID,
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> VideoResponse:
+    return set_video_archived(db, owner, video_id, False)
 
 
 @router.post(

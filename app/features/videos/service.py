@@ -1,6 +1,7 @@
 import hashlib
 import mimetypes
 from pathlib import Path
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -27,6 +28,7 @@ def video_response(video: Video) -> VideoResponse:
         preparation_retryable=video.preparation_retryable,
         original_asset_id=video.original_asset_id,
         preview_asset_id=video.preview_asset_id,
+        archived_at=video.archived_at,
     )
 
 
@@ -125,6 +127,20 @@ def prepare_video_preview(db: Session, video: Video, settings: Settings) -> None
 
 def list_videos(db: Session, owner: User) -> PaginatedVideos:
     return PaginatedVideos(items=[video_response(video) for video in list_owner_videos(db, owner.id)])
+
+
+def list_archived_videos(db: Session, owner: User) -> PaginatedVideos:
+    return PaginatedVideos(items=[video_response(video) for video in list_owner_videos(db, owner.id, archived=True)])
+
+
+def set_video_archived(db: Session, owner: User, video_id: UUID, archived: bool) -> VideoResponse:
+    video = get_owner_video(db, owner.id, video_id)
+    if not video:
+        raise ApiError(404, "VIDEO_NOT_FOUND", "Video was not found.")
+    video.archived_at = datetime.now(UTC) if archived else None
+    db.commit()
+    db.refresh(video)
+    return video_response(video)
 
 
 def get_video_detail(db: Session, owner: User, video_id: UUID) -> VideoResponse:

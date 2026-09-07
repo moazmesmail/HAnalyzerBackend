@@ -6,6 +6,7 @@ from app.features.identity.admin_router import router as admin_router
 from app.features.identity.router import router as auth_router
 from app.features.videos.router import router as videos_router
 from app.features.analysis.router import router as analysis_router
+from app.features.workspaces.router import router as workspaces_router
 from app.features.analysis.service import recover_interrupted_analyses
 from app.platform.config import get_settings
 from app.platform.errors import register_error_handlers
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix=settings.api_prefix)
     app.include_router(videos_router, prefix=settings.api_prefix)
     app.include_router(analysis_router, prefix=settings.api_prefix)
+    app.include_router(workspaces_router, prefix=settings.api_prefix)
     register_error_handlers(app)
     return app
 
