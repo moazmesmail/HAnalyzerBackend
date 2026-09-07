@@ -117,7 +117,7 @@ class DomainAttributes(BaseModel):
     participant_type: str | None = None
     name: str | None = None
     rider_name: str | None = None
-    horse_name: str | None = None
+    horse_name: str | None = "Valentino"
     country: str | None = None
     team: str | None = None
     bib_number: str | None = None
