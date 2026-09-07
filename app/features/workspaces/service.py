@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.features.analysis.models import AnalysisSession, SummaryVideo
 from app.features.identity.models import User
-from app.features.videos.models import Video
+from app.features.videos.models import MediaAsset, Video
 from app.features.videos.service import video_response
 from app.features.workspaces.models import Workspace, WorkspaceVideo
 from app.features.workspaces.schemas import (
@@ -96,23 +96,28 @@ def detach_video(db: Session, owner: User, workspace_id: UUID, video_id: UUID) -
 def get_workspace(db: Session, owner: User, workspace_id: UUID) -> WorkspaceDetailResponse:
     workspace = _get_workspace(db, owner, workspace_id)
     rows = db.execute(
-        select(Video, AnalysisSession, SummaryVideo)
+        select(Video, AnalysisSession, SummaryVideo, MediaAsset)
         .join(WorkspaceVideo, WorkspaceVideo.video_id == Video.id)
         .outerjoin(
             AnalysisSession,
             (AnalysisSession.video_id == Video.id) & (AnalysisSession.owner_id == owner.id),
         )
         .outerjoin(SummaryVideo, SummaryVideo.session_id == AnalysisSession.id)
+        .outerjoin(MediaAsset, (MediaAsset.id == SummaryVideo.asset_id) & (MediaAsset.availability == "available"))
         .where(WorkspaceVideo.workspace_id == workspace.id, Video.owner_id == owner.id)
         .order_by(WorkspaceVideo.created_at, AnalysisSession.created_at.desc())
     ).all()
 
     videos: list[WorkspaceVideoResponse] = []
-    seen: set[UUID] = set()
-    for video, session, summary_video in rows:
-        if video.id in seen:
-            continue
-        seen.add(video.id)
+    selected: dict[UUID, tuple[Video, AnalysisSession | None, SummaryVideo | None]] = {}
+    for video, session, summary_video, media_asset in rows:
+        if video.id not in selected:
+            selected[video.id] = (video, session, None)
+        current_video, current_session, current_summary = selected[video.id]
+        if current_summary is None and summary_video and summary_video.status == "completed" and summary_video.asset_id and media_asset:
+            selected[video.id] = (current_video, current_session, summary_video)
+
+    for video, session, summary_video in selected.values():
         summary = None
         if summary_video:
             summary = {

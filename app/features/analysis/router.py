@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.features.analysis.profiles import PROFILES
@@ -17,7 +17,7 @@ from app.features.analysis.schemas import (
     StructuredAnalysisResponse,
     SummaryVideoResponse,
 )
-from app.features.analysis.service import get_report, get_results, get_session, get_structured_results, get_usage, get_video_sessions, retry_analysis, run_analysis, start_analysis
+from app.features.analysis.service import delete_analysis, get_report, get_results, get_session, get_structured_results, get_usage, get_video_sessions, retry_analysis, run_analysis, start_analysis
 from app.features.analysis.summary import get_summary_video, run_summary_video, start_summary_video
 from app.features.identity.dependencies import csrf_protect, require_approved_user
 from app.features.identity.models import User
@@ -60,6 +60,16 @@ def analysis_detail(session_id: UUID, owner: Annotated[User, Depends(require_app
 @router.get("/analyses/{session_id}/status", response_model=AnalysisSessionResponse)
 def analysis_status(session_id: UUID, owner: Annotated[User, Depends(require_approved_user)], db: Annotated[Session, Depends(get_db)]) -> AnalysisSessionResponse:
     return get_session(db, owner, session_id)
+
+
+@router.delete("/analyses/{session_id}", status_code=204, dependencies=[Depends(csrf_protect)])
+def delete_analysis_route(
+    session_id: UUID,
+    owner: Annotated[User, Depends(require_approved_user)],
+    db: Annotated[Session, Depends(get_db)],
+) -> Response:
+    delete_analysis(db, owner, session_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/analyses/{session_id}/results", response_model=AnalysisResultsResponse)

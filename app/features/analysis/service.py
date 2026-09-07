@@ -756,6 +756,14 @@ def get_session(db: Session, owner: User, session_id: UUID) -> AnalysisSessionRe
     return session_response(session)
 
 
+def delete_analysis(db: Session, owner: User, session_id: UUID) -> None:
+    session = get_owner_session(db, owner.id, session_id)
+    if not session:
+        raise ApiError(404, "ANALYSIS_NOT_FOUND", "Analysis was not found.")
+    db.delete(session)
+    db.commit()
+
+
 def retry_analysis(
     db: Session, owner: User, session_id: UUID, settings: Settings
 ) -> AnalysisSessionResponse:
